@@ -1,0 +1,6 @@
+*.xcodeproj
+build/
+*.ipa
+DerivedData/
+.DS_Store
+Config/Info.plist

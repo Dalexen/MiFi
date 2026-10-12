@@ -1,0 +1,72 @@
+name: Build unsigned IPA
+
+on:
+  push:
+    branches: [main, "claude/**"]
+    paths-ignore:
+      - "data/**"
+      - "**.md"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-ipa
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      - name: Build (no code signing)
+        env:
+          MIFI_GH_CLIENT_ID: ${{ vars.MIFI_GH_CLIENT_ID }}
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project MiFi.xcodeproj \
+            -scheme MiFi \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            MIFI_GH_CLIENT_ID="$MIFI_GH_CLIENT_ID" \
+            build
+
+      - name: Package unsigned IPA
+        run: |
+          APP="build/Build/Products/Release-iphoneos/MiFi.app"
+          test -d "$APP"
+          rm -rf ipa && mkdir -p ipa/Payload
+          cp -R "$APP" ipa/Payload/
+          (cd ipa && zip -qry ../MiFi.ipa Payload)
+          ls -lh MiFi.ipa
+
+      - name: Upload IPA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: MiFi-unsigned-ipa
+          path: MiFi.ipa
+          if-no-files-found: error
+
+      - name: Publish rolling "latest" release
+        if: github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete latest --cleanup-tag --yes || true
+          gh release create latest MiFi.ipa \
+            --title "MiFi (latest unsigned build)" \
+            --notes "Unsigned IPA built from ${GITHUB_SHA::7}. Sign/sideload it with AltStore, Sideloadly, TrollStore, etc."
